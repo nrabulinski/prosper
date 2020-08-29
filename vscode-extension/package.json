@@ -1,0 +1,25 @@
+{
+    "name": "prosper",
+    "displayName": "Prosper",
+    "description": "Syntax highlighting for the prosper language",
+    "version": "0.0.1",
+    "engines": {
+        "vscode": "^1.48.0"
+    },
+    "categories": [
+        "Programming Languages"
+    ],
+    "contributes": {
+        "languages": [{
+            "id": "prosper",
+            "aliases": ["Prosper", "prosper"],
+            "extensions": [".pr"],
+            "configuration": "./language-configuration.json"
+        }],
+        "grammars": [{
+            "language": "prosper",
+            "scopeName": "source.prosper",
+            "path": "./syntaxes/prosper.tmLanguage.json"
+        }]
+    }
+}

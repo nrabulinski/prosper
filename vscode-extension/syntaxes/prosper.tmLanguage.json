@@ -1,0 +1,61 @@
+{
+	"$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+	"name": "Prosper",
+	"patterns": [
+		{
+			"include": "#keywords"
+		},
+		{
+			"include": "#strings"
+		},
+		{
+			"include": "#comments"
+		}
+	],
+	"repository": {
+		"keywords": {
+			"patterns": [{
+				"name": "keyword.control.prosper",
+				"match": "\\b(if|while|for|return)\\b"
+			}, {
+				"name": "storage.type.fun.prosper",
+				"match": "fun"
+			}]
+		},
+		"strings": {
+			"name": "string.quoted.double.prosper",
+			"begin": "\"",
+			"end": "\"",
+			"patterns": [
+				{
+					"name": "constant.character.escape.prosper",
+					"match": "\\\\."
+				}
+			]
+		},
+		"functions": {
+			"name": "meta.function.prosper",
+			"patterns": [{
+				"name": "storage.type.function.prosper",
+				"match": "fun",
+				"patterns": [{
+
+				}],
+			}]
+		},
+		"ident": {
+
+		},
+		"comments": {
+			"patterns": [{
+				"name": "comment.line.prosper",
+				"match": "//.*"
+			}, {
+				"name": "comment.block.prosper",
+				"begin": "/\\*",
+				"end": "\\*/"
+			}]
+		}
+	},
+	"scopeName": "source.prosper"
+}

@@ -1,0 +1,25 @@
+fun print_bool(b: bool);
+fun print_i32(i: i32);
+fun print_f64(f: f64);
+
+fun foo => &1
+
+fun bar(a: *i32) => *a = 3
+
+// main function can either return void or i32
+fun main -> i32 {
+    let a = {
+        let a = 5;
+        5 + 2
+    };
+    print_i32(a);
+    bar(&a);
+    print_i32(*foo() + a);
+    a = 0;
+    a
+}
+
+/*
+this also is a valid main function
+fun main => print_bool(true)
+*/
