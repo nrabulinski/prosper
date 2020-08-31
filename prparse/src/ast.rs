@@ -5,6 +5,7 @@ use crate::token::Literal;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::rc::Weak;
+use std::mem::discriminant;
 
 #[derive(Debug)]
 pub struct AST<'a> {
@@ -87,54 +88,85 @@ pub struct Ident<'a> {
     pub span: Span,
 }
 
-impl<'a> std::cmp::PartialEq for Ident<'a> {
+impl<'a> PartialEq for Ident<'a> {
     fn eq(&self, other: &Self) -> bool {
         self.inner == other.inner
     }
 }
 
-impl<'a> std::cmp::Eq for Ident<'a> {}
+impl<'a> Eq for Ident<'a> {}
 
-impl<'a> std::hash::Hash for Ident<'a> {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.inner.hash(state)
+// impl<'a> std::hash::Hash for Ident<'a> {
+//     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+//         self.inner.hash(state)
+//     }
+// }
+
+#[derive(Debug, Clone, Copy)]
+pub enum Int {
+    I8, U8,
+    I16, U16,
+    I32, U32,
+    I64, U64,
+    Generic
+}
+
+impl PartialEq for Int {
+    #[inline]
+    fn eq(&self, other: &Int) -> bool {
+        match (self, other) {
+            (Int::Generic, _) | (_, Int::Generic) => true,
+            _ => discriminant(self) == discriminant(other),
+        }
     }
 }
+
+impl Eq for Int {}
+
+#[derive(Debug, Clone, Copy)]
+pub enum Float {
+    F32, F64,
+    Generic
+}
+
+impl PartialEq for Float {
+    #[inline]
+    fn eq(&self, other: &Float) -> bool {
+        match (self, other) {
+            (Float::Generic, _) | (_, Float::Generic) => true,
+            _ => discriminant(self) == discriminant(other),
+        }
+    }
+}
+
+impl Eq for Float {}
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum Primitive {
     Str,
     Char,
-    Int,
-    Float,
+    Int(Int),
+    Float(Float),
     Bool,
 }
 
-impl Primitive {
-    pub fn maybe_str(ty: &str) -> Option<Self> {
-        use Primitive::*;
-        Some(match ty {
-            "string" => Str,
-            "char" => Char,
-            "i32" => Int,
-            "f64" => Float,
-            "bool" => Bool,
-            _ => return None
-        })
-    }
-}
+prmacros::enum_str! {
+    Primitive:
+    "string" => Primitive::Str,
+    "char" => Primitive::Char,
+    "bool" => Primitive::Bool,
 
-impl ToString for Primitive {
-    fn to_string(&self) -> String {
-        use Primitive::*;
-        match self {
-            Str => "string".to_string(),
-            Char => "char".to_string(),
-            Int => "i32".to_string(),
-            Float => "f64".to_string(),
-            Bool => "bool".to_string(),
-        }
-    }
+    "i8" => Primitive::Int(Int::I8),
+    "u8" => Primitive::Int(Int::U8),
+    "i16" => Primitive::Int(Int::I16),
+    "u16" => Primitive::Int(Int::U16),
+    "i32" => Primitive::Int(Int::I32),
+    "u32" => Primitive::Int(Int::U32),
+    "i64" => Primitive::Int(Int::I64),
+    "u64" => Primitive::Int(Int::U64),
+
+    "f32" => Primitive::Float(Float::F32),
+    "f64" => Primitive::Float(Float::F64)
 }
 
 #[derive(Debug, Clone)]
@@ -180,7 +212,7 @@ impl<'a> ToString for TypeKind<'a> {
             Tuple(tys) =>
                 "(".to_string() + &tys.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ") + ")",
             Ptr(ty) => "*".to_string() + &ty.to_string(),
-            Primitive(p) => p.to_string(),
+            Primitive(p) => p.as_str().to_string(),
             Ident(i) => i.inner.to_string(),
             Nullable(ty) => "?".to_string() + &ty.to_string(),
             Fun(fty) =>
@@ -239,26 +271,14 @@ impl UnOp {
         }
     }
 
-    pub fn applies_to(&self, ty: &TypeKind<'_>) -> bool {
-        use UnOp::*;
-        match (self, ty) {
-            (Deref, TypeKind::Ptr(_)) => true,
-            (Not, TypeKind::Primitive(Primitive::Bool)) => true,
-            (Complement, TypeKind::Primitive(Primitive::Int)) => true,
-            (Addr, _) => true,
-            (Neg, TypeKind::Primitive(Primitive::Int | Primitive::Float)) => true,
-            _ => false,
-        }
-    }
-
     pub fn get_ty<'a>(&self, ty: &Type<'a>) -> Option<TypeKind<'a>> {
         use UnOp::*;
         let kind = match (self, &ty.kind) {
             (Deref, TypeKind::Ptr(p)) => p.clone().kind,
             (Not, TypeKind::Primitive(Primitive::Bool)) => TypeKind::Primitive(Primitive::Bool),
-            (Complement, TypeKind::Primitive(Primitive::Int)) => TypeKind::Primitive(Primitive::Int),
+            (Complement, TypeKind::Primitive(Primitive::Int(a))) => TypeKind::Primitive(Primitive::Int(*a)),
             (Addr, _) => TypeKind::Ptr(Box::new(ty.clone())),
-            (Neg, kind @ TypeKind::Primitive(Primitive::Int | Primitive::Float)) => kind.clone(),
+            (Neg, kind @ TypeKind::Primitive(Primitive::Int(_) | Primitive::Float(_))) => kind.clone(),
             _ => return None
         };
         // Some(Type {
@@ -337,28 +357,28 @@ impl BinOp {
         match (self, &ty1.kind, &ty2.kind) {
             (Assign, a, b) if a.eq(&b) => Some(TypeKind::Void),
             (
-                Add | Sub, a @ TypeKind::Ptr(_), TypeKind::Primitive(Primitive::Int)
+                Add | Sub, a @ TypeKind::Ptr(_), TypeKind::Primitive(Primitive::Int(_))
             ) => Some(a.clone()),
             (
-                AddEq | SubEq, a @ TypeKind::Ptr(_), TypeKind::Primitive(Primitive::Int)
+                AddEq | SubEq, a @ TypeKind::Ptr(_), TypeKind::Primitive(Primitive::Int(_))
             ) => Some(TypeKind::Void),
             (
                 Add | Sub | Mul | Div | Rem,
-                a @ TypeKind::Primitive(Primitive::Int | Primitive::Char | Primitive::Float),
-                b @ TypeKind::Primitive(Primitive::Int | Primitive::Char | Primitive::Float),
+                a @ TypeKind::Primitive(Primitive::Int(_) | Primitive::Char | Primitive::Float(_)),
+                b @ TypeKind::Primitive(Primitive::Int(_) | Primitive::Char | Primitive::Float(_)),
             ) if a.eq(&b) => Some(a.clone()),
             (
                 AddEq | SubEq | MulEq | DivEq | RemEq,
-                a @ TypeKind::Primitive(Primitive::Int | Primitive::Char | Primitive::Float),
-                b @ TypeKind::Primitive(Primitive::Int | Primitive::Char | Primitive::Float),
+                a @ TypeKind::Primitive(Primitive::Int(_) | Primitive::Char | Primitive::Float(_)),
+                b @ TypeKind::Primitive(Primitive::Int(_) | Primitive::Char | Primitive::Float(_)),
             ) if a.eq(&b) => Some(TypeKind::Void),
             (
                 BitAnd | BitOr | BitXor | Shr | Shl,
-                TypeKind::Primitive(Primitive::Int), TypeKind::Primitive(Primitive::Int)
-            ) => Some(TypeKind::Primitive(Primitive::Int)),
+                TypeKind::Primitive(Primitive::Int(a)), TypeKind::Primitive(Primitive::Int(_))
+            ) => Some(TypeKind::Primitive(Primitive::Int(*a))),
             (
                 BitAndEq | BitOrEq | BitXorEq | ShrEq | ShlEq,
-                TypeKind::Primitive(Primitive::Int), TypeKind::Primitive(Primitive::Int)
+                TypeKind::Primitive(Primitive::Int(_)), TypeKind::Primitive(Primitive::Int(_))
             ) => Some(TypeKind::Void),
             _ => None,
         }
@@ -405,15 +425,34 @@ pub enum ExprKind<'a> {
 #[derive(Debug, Clone)]
 pub struct Expr<'a> {
     pub kind: ExprKind<'a>,
+    pub ty: RefCell<Option<TypeKind<'a>>>,
     pub span: Span,
 }
 
 impl<'a> Expr<'a> {
+    pub fn new(kind: ExprKind<'a>, span: Span) -> Self {
+        Expr {
+            kind, span,
+            ty: RefCell::new(None)
+        }
+    }
+
+    pub fn new_with_type(kind: ExprKind<'a>, span: Span, ty: TypeKind<'a>) -> Self {
+        Expr {
+            kind, span,
+            ty: RefCell::new(Some(ty))
+        }
+    }
+
     pub fn requires_semi(&self) -> bool {
         match self.kind {
             ExprKind::Block(_) => false,
             _ => true
         }
+    }
+
+    pub fn unwrap_type(&self) -> TypeKind<'a> {
+        self.ty.borrow().as_ref().cloned().unwrap()
     }
 }
 

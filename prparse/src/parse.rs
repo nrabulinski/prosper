@@ -110,10 +110,10 @@ impl<'a> Parse<'a> for Function<'a> {
             Token { kind: TK::LBrace, ..} => {
                 let (body, input) = Block::parse(input)?;
                 let span = body.span;
-                let body = Expr {
-                    kind: ExprKind::Block(body),
+                let body = Expr::new(
+                    ExprKind::Block(body),
                     span
-                };
+                );
                 (body, ret.map(|(_, ret)| ret).unwrap_or_else(|| Type {
                     kind: TypeKind::Void,
                     span: Span::EMPTY
@@ -353,10 +353,11 @@ impl<'a> Parse<'a> for Expr<'a> {
             (Token { kind: TK::Ident(_), .. }, Token { kind: TK::Colon, .. }) |
             (Token { kind: TK::LBrace, .. }, _) => {
                 let (block, input) = Block::parse(input)?;
-                Ok((Expr {
-                    span: block.span,
-                    kind: ExprKind::Block(block)
-                }, input))
+                let span = block.span;
+                Ok((Expr::new(
+                    ExprKind::Block(block),
+                    span
+                ), input))
             },
             _ => op_eq(input)
         }
@@ -380,13 +381,11 @@ fn op_eq<'i, 'a>(input: &'i [Token<'a>]) -> PResult<'i, 'a, Expr<'a>> {
         let op = BinOp::from_token(t.kind);
         let (right, rest) = op_eq(&input[1..])?;
         let span = Span::combine(expr.span, right.span);
-        expr = Expr {
-            kind: ExprKind::Binary {
-                lhs: Box::new(expr),
-                op,
-                rhs: Box::new(right)
-            }, span
-        };
+        expr = Expr::new(ExprKind::Binary {
+            lhs: Box::new(expr),
+            op,
+            rhs: Box::new(right)
+        }, span);
         input = rest;
     }
     Ok((expr, input))
@@ -398,13 +397,11 @@ fn or<'i, 'a>(input: &'i [Token<'a>]) -> PResult<'i, 'a, Expr<'a>> {
         let op = BinOp::Or;
         let (right, rest) = and(&input[1..])?;
         let span = Span::combine(expr.span, right.span);
-        expr = Expr {
-            kind: ExprKind::Binary {
-                lhs: Box::new(expr),
-                op,
-                rhs: Box::new(right)
-            }, span
-        };
+        expr = Expr::new(ExprKind::Binary {
+            lhs: Box::new(expr),
+            op,
+            rhs: Box::new(right)
+        }, span);
         input = rest;
     }
     Ok((expr, input))
@@ -416,13 +413,11 @@ fn and<'i, 'a>(input: &'i [Token<'a>]) -> PResult<'i, 'a, Expr<'a>> {
         let op = BinOp::And;
         let (right, rest) = eq(&input[1..])?;
         let span = Span::combine(expr.span, right.span);
-        expr = Expr {
-            kind: ExprKind::Binary {
-                lhs: Box::new(expr),
-                op,
-                rhs: Box::new(right)
-            }, span
-        };
+        expr = Expr::new(ExprKind::Binary {
+            lhs: Box::new(expr),
+            op,
+            rhs: Box::new(right)
+        }, span);
         input = rest;
     }
     Ok((expr, input))
@@ -440,13 +435,11 @@ fn eq<'i, 'a>(input: &'i [Token<'a>]) -> PResult<'i, 'a, Expr<'a>> {
         let op = BinOp::from_token(t.kind);
         let (right, rest) = bit_or(&input[1..])?;
         let span = Span::combine(expr.span, right.span);
-        expr = Expr {
-            kind: ExprKind::Binary {
-                lhs: Box::new(expr),
-                op,
-                rhs: Box::new(right)
-            }, span
-        };
+        expr = Expr::new(ExprKind::Binary {
+            lhs: Box::new(expr),
+            op,
+            rhs: Box::new(right)
+        }, span);
         input = rest;
     }
     Ok((expr, input))
@@ -458,13 +451,11 @@ fn bit_or<'i, 'a>(input: &'i [Token<'a>]) -> PResult<'i, 'a, Expr<'a>> {
         let op = BinOp::BitOr;
         let (right, rest) = xor(&input[1..])?;
         let span = Span::combine(expr.span, right.span);
-        expr = Expr {
-            kind: ExprKind::Binary {
-                lhs: Box::new(expr),
-                op,
-                rhs: Box::new(right)
-            }, span
-        };
+        expr = Expr::new(ExprKind::Binary {
+            lhs: Box::new(expr),
+            op,
+            rhs: Box::new(right)
+        }, span);
         input = rest;
     }
     Ok((expr, input))
@@ -476,13 +467,11 @@ fn xor<'i, 'a>(input: &'i [Token<'a>]) -> PResult<'i, 'a, Expr<'a>> {
         let op = BinOp::BitXor;
         let (right, rest) = bit_and(&input[1..])?;
         let span = Span::combine(expr.span, right.span);
-        expr = Expr {
-            kind: ExprKind::Binary {
-                lhs: Box::new(expr),
-                op,
-                rhs: Box::new(right)
-            }, span
-        };
+        expr = Expr::new(ExprKind::Binary {
+            lhs: Box::new(expr),
+            op,
+            rhs: Box::new(right)
+        }, span);
         input = rest;
     }
     Ok((expr, input))
@@ -494,13 +483,11 @@ fn bit_and<'i, 'a>(input: &'i [Token<'a>]) -> PResult<'i, 'a, Expr<'a>> {
         let op = BinOp::BitAnd;
         let (right, rest) = bit_shift(&input[1..])?;
         let span = Span::combine(expr.span, right.span);
-        expr = Expr {
-            kind: ExprKind::Binary {
-                lhs: Box::new(expr),
-                op,
-                rhs: Box::new(right)
-            }, span
-        };
+        expr = Expr::new(ExprKind::Binary {
+            lhs: Box::new(expr),
+            op,
+            rhs: Box::new(right)
+        }, span);
         input = rest;
     }
     Ok((expr, input))
@@ -512,13 +499,11 @@ fn bit_shift<'i, 'a>(input: &'i [Token<'a>]) -> PResult<'i, 'a, Expr<'a>> {
         let op = BinOp::from_token(t.kind);
         let (right, rest) = addition(&input[1..])?;
         let span = Span::combine(expr.span, right.span);
-        expr = Expr {
-            kind: ExprKind::Binary {
-                lhs: Box::new(expr),
-                op,
-                rhs: Box::new(right)
-            }, span
-        };
+        expr = Expr::new(ExprKind::Binary {
+            lhs: Box::new(expr),
+            op,
+            rhs: Box::new(right)
+        }, span);
         input = rest;
     }
     Ok((expr, input))
@@ -530,13 +515,11 @@ fn addition<'i, 'a>(input: &'i [Token<'a>]) -> PResult<'i, 'a, Expr<'a>> {
         let op = BinOp::from_token(t.kind);
         let (right, rest) = mult(&input[1..])?;
         let span = Span::combine(expr.span, right.span);
-        expr = Expr {
-            kind: ExprKind::Binary {
-                lhs: Box::new(expr),
-                op,
-                rhs: Box::new(right)
-            }, span
-        };
+        expr = Expr::new(ExprKind::Binary {
+            lhs: Box::new(expr),
+            op,
+            rhs: Box::new(right)
+        }, span);
         input = rest;
     }
     Ok((expr, input))
@@ -548,13 +531,11 @@ fn mult<'i, 'a>(input: &'i [Token<'a>]) -> PResult<'i, 'a, Expr<'a>> {
         let op = BinOp::from_token(t.kind);
         let (right, rest) = cast(&input[1..])?;
         let span = Span::combine(expr.span, right.span);
-        expr = Expr {
-            kind: ExprKind::Binary {
-                lhs: Box::new(expr),
-                op,
-                rhs: Box::new(right)
-            }, span
-        };
+        expr = Expr::new(ExprKind::Binary {
+            lhs: Box::new(expr),
+            op,
+            rhs: Box::new(right)
+        }, span);
         input = rest;
     }
     Ok((expr, input))
@@ -566,12 +547,10 @@ fn cast<'i, 'a>(input: &'i [Token<'a>]) -> PResult<'i, 'a, Expr<'a>> {
         let (_, rest) = As::parse(&input[1..])?;
         let (ty, rest) = Type::parse(rest)?;
         let span = Span::combine(expr.span, ty.span);
-        expr = Expr {
-            kind: ExprKind::Cast {
-                expr: Box::new(expr),
-                ty
-            }, span
-        };
+        expr = Expr::new(ExprKind::Cast {
+            expr: Box::new(expr),
+            ty
+        }, span);
         input = rest;
     }
     Ok((expr, input))
@@ -587,10 +566,10 @@ fn unary<'i, 'a>(input: &'i [Token<'a>]) -> PResult<'i, 'a, Expr<'a>> {
         let op = UnOp::from_token(t.kind);
         let (right, input) = unary(&input[1..])?;
         let span = Span::combine(t.span, right.span);
-        return Ok((Expr {
-            kind: ExprKind::Unary { op, expr: Box::new(right) },
+        return Ok((Expr::new(
+            ExprKind::Unary { op, expr: Box::new(right) },
             span
-        }, input))
+        ), input))
     }
     fcall(input)
 }
@@ -622,11 +601,9 @@ fn fcall<'i, 'a>(input: &'i [Token<'a>]) -> PResult<'i, 'a, Expr<'a>> {
             }
         };
         let span = Span::combine(t.span, end);
-        let e = Expr {
-            kind: ExprKind::Call { expr: Box::new(expr), args },
-            span
-        };
-        expr = e;
+        expr = Expr::new(ExprKind::Call {
+            expr: Box::new(expr), args
+        }, span);
         input = rest;
     } 
 
@@ -635,14 +612,14 @@ fn fcall<'i, 'a>(input: &'i [Token<'a>]) -> PResult<'i, 'a, Expr<'a>> {
 
 fn primary<'i, 'a>(input: &'i [Token<'a>]) -> PResult<'i, 'a, Expr<'a>> {
     match input[0] {
-        Token { kind: TK::Lit(literal), span } => Ok((Expr {
-            kind: ExprKind::Lit(literal),
+        Token { kind: TK::Lit(literal), span } => Ok((Expr::new(
+            ExprKind::Lit(literal),
             span
-        }, &input[1..])),
-        Token { kind: TK::Ident(inner), span } => Ok((Expr {
-            kind: ExprKind::Ident(Ident { inner, span }),
+        ), &input[1..])),
+        Token { kind: TK::Ident(inner), span } => Ok((Expr::new(
+            ExprKind::Ident(Ident { inner, span }),
             span
-        }, &input[1..])),
+        ), &input[1..])),
         Token { kind: TK::LParen, span: start } => {
             let (mut inner, rest) = Expr::parse(&input[1..])?;
             match rest[0] {

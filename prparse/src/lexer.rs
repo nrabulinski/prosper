@@ -1,4 +1,4 @@
-use crate::token::{Token, TokenKind, Literal, LitKind, IntLit, FloatLit};
+use crate::token::{Token, TokenKind, Literal, LitKind};
 use TokenKind::*;
 use std::collections::HashMap;
 use crate::CResult;
@@ -201,7 +201,9 @@ impl<'a> Lexer<'a> {
                         span: inner_span
                     }).token(outer_span)
                 },
-                '0' if matches!(self.peek(), Some('x')) => { unimplemented!() },
+                '0' if matches!(self.peek(), Some('b' | 'B' | 'o' | 'O' | 'x' | 'X' | 'r' | 'R')) => {
+                    unimplemented!()
+                },
                 c if is_digit(c) => {
                     let (int, span) = self.number();
                     if matches!((self.peek(), self.peek_next()), (Some('.'), Some(d)) if is_digit(d)) {
@@ -213,16 +215,13 @@ impl<'a> Lexer<'a> {
                         let float: f64 = float.parse().unwrap();
                         let span = Span::combine(span, dspan);
                         Lit(Literal {
-                            kind: LitKind::Float(FloatLit::F64(float)),
+                            kind: LitKind::Float(float),
                             span
                         }).token(span)
                     } else {
                         // SAFETY: This should never panic as we're checking if all the characters are valid digits
                         let int = std::str::from_utf8(int).unwrap();
-                        let int = match int.parse::<i32>() {
-                            Ok(val) => IntLit::I32(val),
-                            Err(_e) => return res.err("Bad number", span)
-                        };
+                        let int: i128 = int.parse().unwrap();
                         Lit(Literal {
                             kind: LitKind::Int(int),
                             span

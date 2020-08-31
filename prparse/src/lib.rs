@@ -1,4 +1,4 @@
-#![feature(or_patterns, type_alias_impl_trait, drain_filter, box_patterns)]
+#![feature(or_patterns, type_alias_impl_trait, drain_filter, box_patterns, bindings_after_at)]
 use std::borrow::Cow;
 use std::ops::{Deref, DerefMut};
 

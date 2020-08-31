@@ -1,27 +1,11 @@
 use crate::span::Span;
 
 #[derive(Debug, Copy, Clone)]
-pub enum IntLit {
-    U8(u8),
-    I8(i8),
-    U16(u16),
-    I16(i16),
-    U32(u32),
-    I32(i32),
-}
-
-#[derive(Debug, Copy, Clone)]
-pub enum FloatLit {
-    F32(f32),
-    F64(f64),
-}
-
-#[derive(Debug, Copy, Clone)]
 pub enum LitKind<'a> {
     Str(&'a [u8]),
     Char(u8),
-    Int(IntLit),
-    Float(FloatLit),
+    Int(i128),
+    Float(f64),
     Bool(bool),
 }
 

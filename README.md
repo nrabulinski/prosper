@@ -14,6 +14,7 @@ $ ./example
 
 ## What doesn't work?
 ### In order of priority:
+- Type coercion
 - Returning from nested blocks
 - Most binary expressions
 - Breaking from nested blocks
@@ -27,7 +28,7 @@ $ ./example
 - Name mangling
 
 ## What does?
-- Ints (kind of)
+- Ints (mostly)
 - Floats (barely)
 - Booleans
 - Nested blocks
@@ -42,6 +43,7 @@ $ ./example
 ## What needs to be done?
 ### In order of priority:
 - Fix everything that's not working
+- Tests
 - Compiler attributes (like `no_mangle`)
 - Modules
 - Proper standard library

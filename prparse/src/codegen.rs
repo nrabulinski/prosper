@@ -1,5 +1,5 @@
 use crate::ast::*;
-use crate::token::{LitKind, IntLit, FloatLit};
+use crate::token::LitKind;
 use inkwell::context::Context;
 use inkwell::builder::Builder;
 use inkwell::module::Module;
@@ -37,19 +37,21 @@ pub fn codegen(ast: AST, output: &Path) {
                 (Cow::from(format!("_{}ABC123", f.ident.inner)),
                 f.ident.inner,
                 &f.args[..],
-                &f.ret),
-            ItemKind::FunDef(FunDef { ident, args, ret, .. }) =>
+                &f.ret,
+                f.to_fn_type()),
+            ItemKind::FunDef(f @ FunDef { ident, args, ret, .. }) =>
                 (Cow::from(ident.inner),
                 ident.inner,
                 &args[..],
-                ret),
+                ret,
+                f.to_fn_type()),
             _ => return None
         }))
-        .for_each(|(ident, name, args, ret)| {
+        .for_each(|(ident, name, args, ret, kind)| {
             let args: Vec<_> = args.iter().map(|arg| arg.ty.kind.llvm_basic_type(cg.ctx)).collect();
             let ty = ret.borrow().kind.llvm_fn_type(cg.ctx, &args);
             let val = cg.module.add_function(&ident, ty, None);
-            scope.fns.insert(name.to_string(), val);
+            scope.fns.insert(name.to_string(), (val, kind));
         });
     eprintln!("\nBEFORE CODEGEN:");
     cg.module.print_to_stderr();
@@ -115,8 +117,18 @@ impl<'a> TypeKind<'a> {
         match self {
             TypeKind::Primitive(p) => match p {
                 Primitive::Char => ctx.i8_type().as_basic_type_enum(),
-                Primitive::Int => ctx.i32_type().as_basic_type_enum(),
-                Primitive::Float => ctx.f64_type().as_basic_type_enum(),
+                Primitive::Int(i) => match i {
+                    Int::I8  | Int::U8  => ctx.i8_type().as_basic_type_enum(),
+                    Int::I16 | Int::U16 => ctx.i16_type().as_basic_type_enum(),
+                    Int::I32 | Int::U32 => ctx.i32_type().as_basic_type_enum(),
+                    Int::I64 | Int::U64 => ctx.i64_type().as_basic_type_enum(),
+                    Int::Generic => ctx.i32_type().as_basic_type_enum(), //unreachable!(), // we should never see generic numeric type in codegen
+                },
+                Primitive::Float(f) => match f {
+                    Float::F32 => ctx.f32_type().as_basic_type_enum(),
+                    Float::F64 => ctx.f64_type().as_basic_type_enum(),
+                    Float::Generic => unreachable!(), // we should never see generic numeric type in codegen
+                },
                 Primitive::Bool => ctx.bool_type().as_basic_type_enum(),
                 t => panic!("not implemented for {:?}", t)
             },
@@ -135,28 +147,61 @@ impl<'a> TypeKind<'a> {
 }
 
 #[derive(Debug)]
-struct Scope<'p, 'ctx> {
-    parent: Option<&'p Scope<'p, 'ctx>>,
-    vars: HashMap<String, PointerValue<'ctx>>,
-    fns: HashMap<String, FunctionValue<'ctx>>,
+struct Scope<'a, 'p, 'ctx> {
+    parent: Option<&'p Scope<'a, 'p, 'ctx>>,
+    vars: HashMap<String, (PointerValue<'ctx>, TypeKind<'a>)>,
+    fns: HashMap<String, (FunctionValue<'ctx>, TypeKind<'a>)>,
 }
 
-#[derive(Debug)]
-enum Val<'ctx> {
+#[derive(Debug, Copy, Clone)]
+enum ValKind<'ctx> {
     L(PointerValue<'ctx>),
     R(BasicValueEnum<'ctx>),
 }
 
-impl<'ctx> Val<'ctx> {
+#[derive(Debug, Clone)]
+struct Val<'a, 'ctx> {
+    kind: ValKind<'ctx>,
+    ty: TypeKind<'a>,
+}
+
+impl<'a, 'ctx> Val<'a, 'ctx> {
+    fn new_l(ptr: PointerValue<'ctx>, ty: TypeKind<'a>) -> Self {
+        Val {
+            kind: ValKind::L(ptr),
+            ty
+        }
+    }
+
+    fn new_r(val: BasicValueEnum<'ctx>, ty: TypeKind<'a>) -> Self {
+        Val {
+            kind: ValKind::R(val),
+            ty
+        }
+    }
+
+    // fn new_void() -> Self {
+    //     Val {
+    //         kind: None,
+    //         ty: TypeKind::Primitive::Void,
+    //     }
+    // }
+
+    fn get_val(&self, cg: &Codegen<'ctx>) -> BasicValueEnum<'ctx> {
+        self.kind.get_val(cg)
+    }
+}
+
+impl<'ctx> ValKind<'ctx> {
     fn get_val(&self, cg: &Codegen<'ctx>) -> BasicValueEnum<'ctx> {
         match self {
-            Val::L(p) => cg.builder.build_load(*p, ""),
-            Val::R(v) => *v
+            ValKind::L(p) => cg.builder.build_load(*p, ""),
+            ValKind::R(v) => *v
         }
     }
 }
 
-impl<'p, 'ctx> Scope<'p, 'ctx> {
+impl<'a, 'p, 'ctx> Scope<'a, 'p, 'ctx> {
     pub fn new() -> Self {
         Scope {
             parent: None,
@@ -173,46 +218,41 @@ impl<'p, 'ctx> Scope<'p, 'ctx> {
         }
     }
 
-    pub fn new_var(&mut self, name: &str, val: PointerValue<'ctx>) { //BasicValueEnum<'ctx>) {
-        self.vars.insert(name.to_string(), val);
+    pub fn new_var(&mut self, name: &str, val: PointerValue<'ctx>, ty: TypeKind<'a>) { //BasicValueEnum<'ctx>) {
+        self.vars.insert(name.to_string(), (val, ty));
     }
 
-    pub fn get_var(&self, name: &str) -> Val<'ctx> { //BasicValueEnum<'ctx> {
+    pub fn get_var(&self, name: &str) -> Val<'a, 'ctx> { //BasicValueEnum<'ctx> {
         self.vars.get(name)
-            .map(|&var| Val::L(var))
-            // .copied()
-            .or_else(|| self.fns.get(name).map(|f|
-                Val::R(f.as_global_value()
+            .map(|(var, ty)| Val::new_l(*var, ty.clone()))
+            .or_else(|| self.fns.get(name).map(|(f, ty)|
+                Val::new_r(f.as_global_value()
                     .as_pointer_value()
-                    .as_basic_value_enum())
+                    .as_basic_value_enum(), ty.clone())
             )).or_else(|| self.parent.map(|p| p.get_var(name)))
             .expect("No such variable")
     }
 
     pub fn get_fn(&self, name: &str) -> FunctionValue<'ctx> {
         self.fns.get(name)
-            .copied()
+            .map(|(f, _)| *f)
             .or_else(|| self.parent.map(|p| p.get_fn(name)))
             .expect("No such function")
     }
 }
 
-trait Cg<'ctx> {
-    fn codegen(&self, cg: &Codegen<'ctx>, scope: &Scope<'_, 'ctx>);
-}
-
-impl<'a, 'ctx> Cg<'ctx> for Function<'a> {
-    fn codegen(&self, cg: &Codegen<'ctx>, scope: &Scope<'_, 'ctx>) {
+impl<'a, 'ctx> Function<'a> {
+    fn codegen(&self, cg: &Codegen<'ctx>, scope: &Scope<'a, '_, 'ctx>) {
         let mut scope = Scope::from_parent(scope); //Scope { parent: Some(scope), vars: HashMap::new(), fns: HashMap::new() };
         let decl = scope.get_fn(self.ident.inner);
         let start = cg.ctx.append_basic_block(decl, "start");
         cg.builder.position_at_end(start);
         decl.get_param_iter()
-            .zip(self.args.iter().map(|arg| arg.ident.inner))
+            .zip(self.args.iter()/*.map(|arg| arg.ident.inner)*/)
             .for_each(|(param, arg)| {
-                let ptr = cg.builder.build_alloca(param.get_type(), arg);
+                let ptr = cg.builder.build_alloca(param.get_type(), arg.ident.inner);
                 cg.builder.build_store(ptr, param);
-                scope.new_var(arg, ptr);
+                scope.new_var(arg.ident.inner, ptr, arg.ty.kind.clone());
             });
         match &self.body.kind {
             ExprKind::Block(b) => assert!(b.codegen(cg, &scope, None).is_none()),
@@ -226,21 +266,32 @@ impl<'a, 'ctx> Cg<'ctx> for Function<'a> {
 }
 
 impl<'a, 'ctx> Expr<'a> {
-    fn codegen(&self, cg: &Codegen<'ctx>, scope: &Scope<'_, 'ctx>, name: Option<&str>) -> Option<Val<'ctx>> {
+    fn codegen(&self, cg: &Codegen<'ctx>, scope: &Scope<'a, '_, 'ctx>, name: Option<&str>) -> Option<Val<'a, 'ctx>> {
+        println!("CODEGEN EXPR: {:?}", self);
+        let ty = self.unwrap_type();
         match &self.kind {
-            ExprKind::Lit(l) => Some(Val::R(match &l.kind {
+            ExprKind::Lit(l) => Some(Val::new_r(match &l.kind {
                 LitKind::Char(i) => cg.ctx.i8_type().const_int((*i) as u64, false).as_basic_value_enum(),
                 LitKind::Bool(b) => cg.ctx.bool_type().const_int(if *b { 1 } else { 0 }, false).as_basic_value_enum(),
-                LitKind::Int(i) => match i {
-                    IntLit::I32(i) => cg.ctx.i32_type().const_int((*i) as u64, false).as_basic_value_enum(),
+                LitKind::Int(i) => match &ty {
+                    TypeKind::Primitive(Primitive::Int(t)) => match t {
+                        Int::I8  | Int::U8  =>  cg.ctx.i8_type().const_int((*i) as u64, false).as_basic_value_enum(),
+                        Int::I16 | Int::U16 => cg.ctx.i16_type().const_int((*i) as u64, false).as_basic_value_enum(),
+                        Int::I32 | Int::U32 => cg.ctx.i32_type().const_int((*i) as u64, false).as_basic_value_enum(),
+                        Int::I64 | Int::U64 => cg.ctx.i64_type().const_int((*i) as u64, false).as_basic_value_enum(),
+                        Int::Generic => {
+                            eprintln!("Found generic int type in codegen?");
+                            cg.ctx.i32_type().const_int((*i) as u64, false).as_basic_value_enum()
+                        }
+                    },
                     _ => unimplemented!()
                 },
-                LitKind::Float(f) => match f {
-                    FloatLit::F64(f) => cg.ctx.f64_type().const_float(*f).as_basic_value_enum(),
-                    FloatLit::F32(f) => cg.ctx.f32_type().const_float((*f) as f64).as_basic_value_enum(),
-                }
+                // LitKind::Float(f) => match f {
+                //     FloatLit::F64(f) => cg.ctx.f64_type().const_float(*f).as_basic_value_enum(),
+                //     FloatLit::F32(f) => cg.ctx.f32_type().const_float((*f) as f64).as_basic_value_enum(),
+                // }
                 _ => unimplemented!()
-            })),
+            }, ty)),
             ExprKind::Call { expr, args } => {
                 let args = args.iter()
                     .map(|arg| arg.codegen(cg, scope, None).map(|v| v.get_val(cg))
@@ -252,7 +303,9 @@ impl<'a, 'ctx> Expr<'a> {
                     t => panic!("unexpected type in function call {:?}", t)
                 };
                 cg.builder.build_call(f, &args, name.unwrap_or(""))
-                    .try_as_basic_value().left().map(|val| Val::R(val))
+                    .try_as_basic_value()
+                    .left()
+                    .map(|val| Val::new_r(val, ty))
             },
             ExprKind::Ident(i) => Some(scope.get_var(i.inner)),
             ExprKind::Unary { op, expr } => {
@@ -264,7 +317,7 @@ impl<'a, 'ctx> Expr<'a> {
                             BasicValueEnum::PointerValue(val) => val,
                             _ => unreachable!()
                         };
-                        Some(Val::R(cg.builder.build_load(val, name.unwrap_or(""))))
+                        Some(Val::new_r(cg.builder.build_load(val, name.unwrap_or("")), self.unwrap_type()))
                     },
                     UnOp::Not => {
                         let expr = expr.get_val(cg);
@@ -272,20 +325,21 @@ impl<'a, 'ctx> Expr<'a> {
                             BasicValueEnum::IntValue(val) => val,
                             _ => unreachable!()
                         };
-                        Some(Val::R(cg.builder.build_not(val, name.unwrap_or("")).as_basic_value_enum()))
+                        Some(Val::new_r(cg.builder.build_not(val, name.unwrap_or("")).as_basic_value_enum(), self.unwrap_type()))
                     },
                     UnOp::Addr => {
-                        match expr {
-                            Val::L(ptr) => Some(Val::R(ptr.as_basic_value_enum())),
-                            Val::R(v) => if match v {
+                        match expr.kind {
+                            ValKind::L(ptr) => Some(Val::new_r(ptr.as_basic_value_enum(), self.unwrap_type())),
+                            ValKind::R(v) => if match v {
                                 BasicValueEnum::IntValue(val) => val.is_const(),
                                 BasicValueEnum::FloatValue(val) => val.is_const(),
                                 _ => unimplemented!()
                             } {
+                                let ty = self.unwrap_type();
                                 let g = cg.module.add_global(v.get_type(), None, "");
                                 g.set_constant(true);
                                 g.set_initializer(&v);
-                                Some(Val::R(g.as_pointer_value().as_basic_value_enum()))
+                                Some(Val::new_r(g.as_pointer_value().as_basic_value_enum(), ty))
                             } else {
                                 unimplemented!()
                             }
@@ -296,14 +350,15 @@ impl<'a, 'ctx> Expr<'a> {
             },
             ExprKind::Binary { lhs, op, rhs } => {
                 let e2 = rhs.codegen(cg, scope, None).unwrap();
+                let ty = self.unwrap_type();
                 match op {
                     BinOp::Assign => {
                         let ptr = match &lhs.kind {
                             ExprKind::Unary { op: UnOp::Deref, expr } =>
                                 expr.codegen(cg, scope, None).unwrap().get_val(cg).into_pointer_value(),
-                            _ => match lhs.codegen(cg, scope, None).unwrap() {
-                                Val::L(ptr) => ptr,
-                                Val::R(_) => unreachable!()
+                            _ => match lhs.codegen(cg, scope, None).unwrap().kind {
+                                ValKind::L(ptr) => ptr,
+                                ValKind::R(_) => unreachable!()
                             }
                         };
                         let new_val = e2.get_val(cg);
@@ -314,10 +369,10 @@ impl<'a, 'ctx> Expr<'a> {
                 }
                 let e1 = lhs.codegen(cg, scope, None).unwrap();
                 match op {
-                    BinOp::Add => Some(Val::R(gen_add(cg, e1.get_val(cg), e2.get_val(cg), name.unwrap_or("")))),
-                    BinOp::Sub => Some(Val::R(gen_sub(cg, e1.get_val(cg), e2.get_val(cg), name.unwrap_or("")))),
-                    BinOp::Mul => Some(Val::R(gen_mul(cg, e1.get_val(cg), e2.get_val(cg), name.unwrap_or("")))),
-                    BinOp::Div => Some(Val::R(gen_div(cg, e1.get_val(cg), e2.get_val(cg), name.unwrap_or("")))),
+                    BinOp::Add => Some(Val::new_r(gen_add(cg, e1.get_val(cg), e2.get_val(cg), name.unwrap_or("")), ty)),
+                    BinOp::Sub => Some(Val::new_r(gen_sub(cg, e1.get_val(cg), e2.get_val(cg), name.unwrap_or("")), ty)),
+                    BinOp::Mul => Some(Val::new_r(gen_mul(cg, e1.get_val(cg), e2.get_val(cg), name.unwrap_or("")), ty)),
+                    BinOp::Div => Some(Val::new_r(gen_div(cg, &ty, e1.get_val(cg), e2.get_val(cg), name.unwrap_or("")), ty)),
                     _ => unimplemented!()
                 }
             },
@@ -381,21 +436,30 @@ fn gen_mul<'ctx>(cg: &Codegen<'ctx>, lhs: BasicValueEnum<'ctx>, rhs: BasicValueE
     }
 }
 
-fn gen_div<'ctx>(cg: &Codegen<'ctx>, lhs: BasicValueEnum<'ctx>, rhs: BasicValueEnum<'ctx>, name: &str) -> BasicValueEnum<'ctx> {
+fn gen_div<'ctx>(cg: &Codegen<'ctx>, kind: &TypeKind<'_>, lhs: BasicValueEnum<'ctx>, rhs: BasicValueEnum<'ctx>, name: &str) -> BasicValueEnum<'ctx> {
     let ty = lhs.get_type();
     debug_assert_eq!(ty, rhs.get_type());
     match ty {
         BasicTypeEnum::IntType(_) => {
             let lhs = lhs.into_int_value();
             let rhs = rhs.into_int_value();
-            cg.builder.build_int_signed_div(lhs, rhs, name).as_basic_value_enum()
+            match kind {
+                TypeKind::Primitive(p) => match p {
+                    Primitive::Int(i) => match i {
+                        Int::I8 | Int::I16 | Int::I32 | Int::I64 => cg.builder.build_int_signed_div(lhs, rhs, name).as_basic_value_enum(),
+                        _ => cg.builder.build_int_unsigned_div(lhs, rhs, name).as_basic_value_enum(),
+                    },
+                    _ => unreachable!()
+                },
+                _ => unreachable!()
+            }
         },
         _ => unimplemented!(),
     }
 }
 
 impl<'a, 'ctx> Block<'a> {
-    fn codegen(&self, cg: &Codegen<'ctx>, scope: &Scope<'_, 'ctx>, inner_block: Option<BasicBlock<'ctx>>) /*is_fun_body: bool)*/ -> Option<Val<'ctx>> {
+    fn codegen(&self, cg: &Codegen<'ctx>, scope: &Scope<'a, '_, 'ctx>, inner_block: Option<BasicBlock<'ctx>>) /*is_fun_body: bool)*/ -> Option<Val<'a, 'ctx>> {
         let b = if let Some(b) = inner_block { b } else { //is_fun_body {
             // return self.codegen_inner(cg, scope);
             match self.codegen_inner(cg, scope) {
@@ -422,7 +486,7 @@ impl<'a, 'ctx> Block<'a> {
         ret
     }
 
-    fn codegen_inner(&self, cg: &Codegen<'ctx>, scope: &Scope<'_, 'ctx>) -> Option<Val<'ctx>> {
+    fn codegen_inner(&self, cg: &Codegen<'ctx>, scope: &Scope<'a, '_, 'ctx>) -> Option<Val<'a, 'ctx>> {
         let mut scope = Scope::from_parent(scope);
         let (last, stmts) = self.stmts.split_last()?;
         for stmt in stmts {
@@ -435,11 +499,14 @@ impl<'a, 'ctx> Block<'a> {
                     e.codegen(cg, &scope, None);
                 },
                 Stmt::Let(l) => { //l.codegen(cg, &mut scope),
-                    let val = l.init.codegen(cg, &scope, None)?.get_val(cg);
-                    let ty = val.get_type();
+                    println!("LET STATEMENT: {:?}", l);
+                    let val = l.init.codegen(cg, &scope, None)?;
+                    println!("VAL: {:?}", val);
+                    let ty = l.ty.borrow().kind.llvm_basic_type(cg.ctx);
+                    println!("TY: {:?}", ty);
                     let ptr = cg.builder.build_alloca(ty, l.ident.inner);
-                    cg.builder.build_store(ptr, val);
-                    scope.new_var(l.ident.inner, ptr);
+                    cg.builder.build_store(ptr, val.get_val(cg));
+                    scope.new_var(l.ident.inner, ptr, val.ty.clone());
                 },
                 _ => unreachable!(),
             }
@@ -456,17 +523,17 @@ impl<'a, 'ctx> Block<'a> {
     }
 }
 
-fn build_return<'ctx>(cg: &Codegen<'ctx>, val: Option<Val<'ctx>>) {
+fn build_return<'ctx>(cg: &Codegen<'ctx>, val: Option<Val<'_, 'ctx>>) {
     let val = val.map(|v| v.get_val(cg));
     cg.builder.build_return(val.as_ref().map(|val| val as &dyn BasicValue));
 }
 
 impl<'a, 'ctx> LetStmt<'a> {
-    fn codegen(&self, cg: &Codegen<'ctx>, scope: &mut Scope<'_, 'ctx>) {
-        let val = self.init.codegen(cg, scope, None).unwrap().get_val(cg);
-        let ty = val.get_type(); // TODO: Use self.ty to deal with stuff like let a: u8 = 5;
+    fn codegen(&self, cg: &Codegen<'ctx>, scope: &mut Scope<'a, '_, 'ctx>) {
+        let val = self.init.codegen(cg, scope, None).unwrap();
+        let ty = val.ty.llvm_basic_type(cg.ctx);
         let ptr = cg.builder.build_alloca(ty, self.ident.inner);
-        cg.builder.build_store(ptr, val);
-        scope.new_var(self.ident.inner, ptr);
+        cg.builder.build_store(ptr, val.get_val(cg));
+        scope.new_var(self.ident.inner, ptr, val.ty.clone());
     }
 }

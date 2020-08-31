@@ -1,5 +1,6 @@
 fun print_bool(b: bool);
 fun print_i32(i: i32);
+fun print_u64(i: u64);
 fun print_f64(f: f64);
 
 fun foo => &1
@@ -12,6 +13,9 @@ fun main -> i32 {
         let a = 5;
         5 + 2
     };
+    let b: u64 = 6;
+    let c: u64 = 2;
+    print_u64(b / c);
     print_i32(a);
     bar(&a);
     print_i32(*foo() + a);

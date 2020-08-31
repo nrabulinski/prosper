@@ -5,7 +5,9 @@ use std::collections::HashSet;
 use std::borrow::Cow;
 use std::cell::RefCell;
 
-mod typed;
+mod literal;
+mod expr;
+mod function;
 
 #[derive(Debug)]
 pub struct Var<'a> {
@@ -114,8 +116,8 @@ impl<'i, 'a> Scope<'i, 'a> {
             };
             if self.validated.borrow().contains(ident.inner) { continue; }
             self.validating.borrow_mut().insert(ident.inner);
-            warns.append(&mut item.validate(self)?);
-            assert!(self.validating.borrow_mut().remove(ident.inner));
+            item.validate(self, &mut warns)?;
+            debug_assert!(self.validating.borrow_mut().remove(ident.inner));
             self.validated.borrow_mut().insert(ident.inner);
         }
         Ok(warns)
@@ -165,9 +167,9 @@ impl<'i, 'a> Scope<'i, 'a> {
     }
 }
 
-// trait Validate<'a> {
-//     fn validate<'i>(&self, scope: &'i Scope<'i, 'a>) -> Result<Vec<Message>, Message>;
-// }
+trait Validate<'a> {
+    fn validate<'i>(&self, scope: &'i Scope<'i, 'a>, warns: &mut Vec<Message>) -> Result<(Type<'a>, Vec<Type<'a>>), Message>;
+}
 
 pub fn validate_ast<'i, 'a>(items: &'i [Item<'a>]) -> Result<Vec<Message>, Message> {
     let mut scope: Scope<'i, 'a> = Scope::from_items(items)?;
@@ -186,7 +188,7 @@ pub fn validate_ast<'i, 'a>(items: &'i [Item<'a>]) -> Result<Vec<Message>, Messa
         _ => None
     }) {
         let res = (match &*m.ret.borrow() {
-            Type { kind: TypeKind::Void | TypeKind::Primitive(Primitive::Int), .. } => Ok(res),
+            Type { kind: TypeKind::Void | TypeKind::Primitive(Primitive::Int(Int::I32)), .. } => Ok(res),
             t => Err(Message::new("Main function can only return `void` or `i32`!", if t.span.is_empty() { m.span } else { t.span }))
         })?;
         if m.args.len() == 0 {
@@ -200,35 +202,34 @@ pub fn validate_ast<'i, 'a>(items: &'i [Item<'a>]) -> Result<Vec<Message>, Messa
 }
 
 impl<'a> Type<'a> {
-    fn validate<'i>(&self, scope: &'i Scope<'i, 'a>) -> Result<Vec<Message>, Message> {
+    fn validate<'i>(&self, scope: &'i Scope<'i, 'a>) -> Result<(), Message> {
         match &self.kind {
             TypeKind::Tuple(tys) => { for ty in tys {
                 ty.validate(scope)?;
-            } Ok(Vec::new()) },
+            } Ok(()) },
             TypeKind::Ptr(ty) => ty.validate(scope),
             TypeKind::Ident(_) => Err(Message::new("Custom types aren't supported yet!", self.span)),
             TypeKind::Nullable(_) => Err(Message::new("Nullable types aren't supported yet!", self.span)),
             TypeKind::Fun(f) => {
                 println!("do we need to validate this? {:?}", f);
-                Ok(Vec::new())
+                Ok(())
             },
-            _ => Ok(Vec::new()) // rest of the types (i.e. infer, !, void and primitives) are always valid
+            _ => Ok(()) // rest of the types (i.e. infer, !, void and primitives) are always valid
         }
     }
 }
 
 impl<'a> Item<'a> {
-    fn validate<'i>(&self, scope: &'i Scope<'i, 'a>) -> Result<Vec<Message>, Message> {
+    fn validate<'i>(&self, scope: &'i Scope<'i, 'a>, warns: &mut Vec<Message>) -> Result<(), Message> {
         match &self.kind {
-            ItemKind::Func(f) => f.validate(scope),
+            ItemKind::Func(f) => f.validate(scope, warns),
             ItemKind::FunDef(f) => f.validate(scope)
         }
     }
 }
 
 impl<'a> Function<'a> {
-    fn validate<'i>(&self, scope: &'i Scope<'i, 'a>) -> Result<Vec<Message>, Message> {
-        let mut warns = Vec::new();
+    fn validate<'i>(&self, scope: &'i Scope<'i, 'a>, warns: &mut Vec<Message>) -> Result<(), Message> {
         let ident = self.ident.inner;
         if ident.to_ascii_lowercase() != ident {
             warns.push(Message::new(
@@ -245,11 +246,10 @@ impl<'a> Function<'a> {
             };
             scope.push_var(var);
         }
-        let (ty, r, mut w) = match &self.body.kind {
-            ExprKind::Block(b) => b.validate(&scope, true)?,
-            _ => self.body.validate(&scope)?
+        let (ty, r ) = match &self.body.kind {
+            ExprKind::Block(b) => b.validate(&scope, warns, true)?,
+            _ => self.body.validate(&scope, warns)?
         };
-        warns.append(&mut w);
         for t in r {
             if !ty.kind.eq(&t.kind) {
                 return Err(Message::new(format!("Type mismatch"), t.span))
@@ -277,105 +277,16 @@ impl<'a> Function<'a> {
         // if let TypeKind::Any = self.ret.borrow().kind {
         //     warns.push(Message::new("This function never returns", self.span));
         // }
-        Ok(warns)
+        Ok(())
     }
 }
 
 impl<'a> FunDef<'a> {
-    fn validate<'i>(&self, scope: &'i Scope<'i, 'a>) -> Result<Vec<Message>, Message> {
+    fn validate<'i>(&self, scope: &'i Scope<'i, 'a>) -> Result<(), Message> {
         for arg in &self.args {
             arg.ty.validate(scope)?;
         }
         self.ret.borrow().validate(scope)
-    }
-}
-
-impl<'a> Expr<'a> {
-    // TODO: MAKE VALIDATE RETURN (TYPE, RET_TYPE, WARNS) INSTEAD OF JUST WARNS
-    // AND IN FUNCTION::VALIDATE CHECK THE RETURN TYPE 
-    // ^ kinda done
-    fn validate<'i>(&self, scope: &'i Scope<'i, 'a>) -> Result<(Type<'a>, Vec<Type<'a>>, Vec<Message>), Message> {
-        let mut warns = Vec::new();
-        let (ty, ret) = match &self.kind {
-            ExprKind::Ident(i) => if let Some(var) = scope.get_var(*i) {
-                if matches!(var.ty, TypeKind::Fun(_)) {
-                    if let FnStatus::Waiting(s, f) = scope.get_fn_status(var.ident.inner) {
-                        s.validating.borrow_mut().insert(f.ident().inner);
-                        warns.append(&mut f.validate(s)?);
-                        assert!(s.validating.borrow_mut().remove(f.ident().inner));
-                        s.validated.borrow_mut().insert(f.ident().inner);
-                    }
-                }
-                let ty = self.get_type(scope);
-                (ty, vec![])
-            } else {
-                return Err(Message::new(format!("`{}` is not defined", i.inner), i.span));
-            },
-            ExprKind::Lit(_) => {
-                let ty = self.get_type(scope);
-                (ty, vec![])
-            },
-            ExprKind::Call { expr, args } => {
-                let (ty, _, mut w) = expr.validate(scope)?;
-                warns.append(&mut w);
-                let (a, ret) = if let TypeKind::Fun(a) = ty.kind {
-                    (a.args, a.ret.upgrade().unwrap().borrow().kind.clone())
-                } else {
-                    return Err(Message::new(format!("Expected a function, found `{}`", ty.to_string()), expr.span));
-                };
-                if a.len() != args.len() {
-                    return Err(Message::new(helpers::expected_count(a.len(), args.len(), "argument"), self.span));
-                }
-                for (arg, ex) in args.iter().zip(a.iter()) {
-                    let (ty, _, mut w) = arg.validate(scope)?;
-                    warns.append(&mut w);
-                    if !ex.kind.eq(&ty.kind) {
-                        return Err(Message::new(format!("Type mismatch: expected `{}`, got `{}`", ex.to_string(), ty.to_string()), arg.span));
-                    }
-                }
-                let ret = Type {
-                    kind: ret,
-                    span: self.span
-                };
-                (ret, vec![])
-            },
-            ExprKind::Unary { op, expr } => {
-                let (ty, ret, mut w) = expr.validate(scope)?;
-                warns.append(&mut w);
-                if let Some(t) = op.get_ty(&ty) {
-                    let t = Type {
-                        kind: t,
-                        span: self.span
-                    };
-                    (t, ret)
-                } else {
-                    return Err(Message::new(format!("Can't use {} operator with {}", op.as_str(), ty.to_string()), self.span));
-                }
-                // if !op.applies_to(&ty.kind) {
-                //     return Err(Message::new(format!("Can't use {} operator with {}", op.as_str(), ty.to_string()), self.span));
-                // }
-                // (ty, ret)
-            },
-            ExprKind::Block(b) => return b.validate(scope, false),
-            ExprKind::Binary { lhs, op, rhs } => {
-                let (ty1, mut ret, mut w) = lhs.validate(scope)?;
-                warns.append(&mut w);
-                let (ty2, mut r, mut w) = rhs.validate(scope)?;
-                warns.append(&mut w);
-                ret.append(&mut r);
-                if let Some(t) = op.get_ty(&ty1, &ty2) {
-                    let t = Type {
-                        kind: t,
-                        span: self.span
-                    };
-                    (t, ret)
-                } else {
-                    return Err(Message::new(format!("{} is not implemented for {} and {}", op.as_str(), ty1.to_string(), ty2.to_string()), self.span))
-                }
-            }
-            _ => unimplemented!()
-        };
-        Ok((ty, ret, warns))
     }
 }
 
@@ -410,40 +321,60 @@ mod helpers {
 }
 
 impl<'a> Block<'a> {
-    fn validate<'i>(&self, scope: &'i Scope<'i, 'a>, is_fun_body: bool) -> Result<(Type<'a>, Vec<Type<'a>>, Vec<Message>), Message> {
-        let mut warns = Vec::new();
+    fn validate<'i>(&self, scope: &'i Scope<'i, 'a>, warns: &mut Vec<Message>, is_fun_body: bool) -> Result<(Type<'a>, Vec<Type<'a>>), Message> {
         let mut ret = Vec::new();
-        let items = &self.items;
-        let mut scope = Scope::from_parent_with_items(items, scope)?;
-        warns.append(&mut scope.validate_items()?);
         let (last, stmts) = match self.stmts.split_last() {
             Some(a) => a,
             None => {
                 return Ok((
                     Type {
                         kind: TypeKind::Void,
-                        span: Span::EMPTY,
+                        span: self.span,
                     },
-                    ret,
-                    warns
+                    ret
                 ));
             }
         };
+        let items = &self.items;
+        if items.len() > 0 {
+            return Err(Message::new("Items in blocks are not supported yet", self.span));
+        }
+        let mut scope = Scope::from_parent_with_items(items, scope)?;
+        warns.append(&mut scope.validate_items()?);
         for stmt in stmts {
             match stmt {
                 Stmt::Semi(e) | Stmt::Expr(e) => {
-                    let (_, mut r, mut w) = e.validate(&scope)?;
+                    let (_, mut r) = e.validate(&scope, warns)?;
                     ret.append(&mut r);
-                    warns.append(&mut w);
                 },
+                // TODO: REWRITE THIS
                 Stmt::Let(l) => {
-                    let (ty, mut r, mut w) = l.init.validate(&scope)?;
+                    let (ty, mut r) = l.init.validate(&scope, warns)?;
                     ret.append(&mut r);
-                    warns.append(&mut w);
                     match &mut *l.ty.borrow_mut() {
-                        Type { kind: ref mut k @ TypeKind::Infer, .. } => *k = ty.kind.clone(),
+                        Type { kind: ref mut k @ TypeKind::Infer, .. } => match &mut *l.init.ty.borrow_mut() {
+                            Some(TypeKind::Primitive(Primitive::Int(ref mut t @ Int::Generic))) => {
+                                *t = Int::I32;
+                                *k = TypeKind::Primitive(Primitive::Int(Int::I32));
+                            },
+                            Some(TypeKind::Primitive(Primitive::Float(ref mut t @ Float::Generic))) => {
+                                *t = Float::F64;
+                                *k = TypeKind::Primitive(Primitive::Float(Float::F64));
+                            }
+                            Some(kind) => *k = kind.clone(),
+                            _ => panic!("Tried to assign an expression of unknown type to a variable")
+                        },
                         Type { kind, span } => if !kind.eq(&ty.kind) {
                             return Err(Message::new(format!("Type mismatch - expected {} but body returns {}", kind.to_string(), ty.kind.to_string()), *span));
+                        },
+                        Type { kind, span } => match &mut *l.init.ty.borrow_mut() {
+                            Some(ref mut t @ TypeKind::Primitive(Primitive::Int(Int::Generic) | Primitive::Float(Float::Generic))) => {
+                                *t = kind.clone();
+                            },
+                            Some(k) => if !kind.eq(k) {
+                                return Err(Message::new(format!("Type mismatch - expected {} but body returns {}", kind.to_string(), ty.kind.to_string()), *span));
+                            },
+                            _ => panic!("Tried to assign an expression of unknown type to a variable")
                         }
                     }
                     let var = Var {
@@ -453,10 +384,9 @@ impl<'a> Block<'a> {
                     scope.push_var(var);
                 },
                 Stmt::Return(e) => {
-                    let (ty, mut r, mut w) = e.validate(&scope)?;
+                    let (ty, mut r) = e.validate(&scope, warns)?;
                     ret.append(&mut r);
                     ret.push(ty);
-                    warns.append(&mut w);
                 }
                 _ => unreachable!()
             }
@@ -467,15 +397,13 @@ impl<'a> Block<'a> {
                 span: *span
             },
             Stmt::Expr(e) => {
-                let (ty, mut r, mut w) = e.validate(&scope)?;
+                let (ty, mut r) = e.validate(&scope, warns)?;
                 ret.append(&mut r);
-                warns.append(&mut w);
                 ty
             },
             Stmt::Return(e) => {
-                let (ty, mut r, mut w) = e.validate(&scope)?;
+                let (ty, mut r) = e.validate(&scope, warns)?;
                 ret.append(&mut r);
-                warns.append(&mut w);
                 if is_fun_body {
                     ty
                 } else {
@@ -489,6 +417,6 @@ impl<'a> Block<'a> {
             _ => unreachable!()
         };
         println!("Validating a block.\nIs fun body? {}\nReturn types: {:?}\nType of the block: {:?}\n", is_fun_body, ret, ty);
-        Ok((ty, ret, warns))
+        Ok((ty, ret))
     }
 }

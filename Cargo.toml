@@ -3,4 +3,5 @@
 members = [
     "prparse",
     "prosperc",
+    "prmacros",
 ]
