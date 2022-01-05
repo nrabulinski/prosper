@@ -1,0 +1,17 @@
+{
+  "name": "tree-sitter-prosper",
+  "version": "0.0.1",
+  "description": "Tree-sitter parser for the Prosper programming language",
+  "main": "src/index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "Nikodem Rabuliński <nikodem@rabulinski.com>",
+  "license": "MIT",
+  "dependencies": {
+    "nan": "^2.15.0"
+  },
+  "devDependencies": {
+    "tree-sitter-cli": "^0.20.1"
+  }
+}

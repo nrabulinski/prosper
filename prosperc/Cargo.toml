@@ -1,0 +1,18 @@
+[package]
+name = "prosperc"
+description = "The prosper language compiler"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[[bin]]
+name = "prc"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0.52"
+clap = { version = "3.0.1", features = ["derive"] }
+if_chain = "1.0.2"
+paste = "1.0.6"
+thiserror = "1.0.30"
