@@ -1,10 +1,5 @@
-
-
-
 use super::*;
-use crate::{
-	token::{Token, TokenKind as TK},
-};
+use crate::token::{Token, TokenKind as TK};
 
 impl Type {
 	pub fn parse(token: Token) -> Result<SpanType> {

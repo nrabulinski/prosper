@@ -1,6 +1,5 @@
 #![feature(result_cloned)]
 
-
 use anyhow::{Context, Result};
 use clap::Parser;
 
@@ -9,8 +8,6 @@ mod lex;
 mod parse;
 mod span;
 mod token;
-
-
 
 #[derive(Parser, Debug)]
 #[clap(about, version, author)]

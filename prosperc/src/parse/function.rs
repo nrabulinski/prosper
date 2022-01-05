@@ -1,10 +1,7 @@
 use if_chain::if_chain;
 
-
 use super::*;
-use crate::{
-	token::{TokenKind as TK},
-};
+use crate::token::TokenKind as TK;
 
 impl Function {
 	pub fn parse(tokens: &mut Stream) -> Result<Function> {

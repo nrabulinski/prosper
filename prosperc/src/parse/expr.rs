@@ -1,12 +1,7 @@
 use std::hint::unreachable_unchecked;
 
-
-
-
 use super::*;
-use crate::{
-	token::{Token, TokenKind as TK},
-};
+use crate::token::{Token, TokenKind as TK};
 
 /// Generates a recursive descent parser and parses the tokens.
 /// LOWEST TO HIGHEST PRECEDENCE

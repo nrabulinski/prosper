@@ -1,10 +1,7 @@
 use if_chain::if_chain;
 
-
 use super::*;
-use crate::{
-	token::{TokenKind as TK},
-};
+use crate::token::TokenKind as TK;
 
 impl Item {
 	pub fn parse(tokens: &mut Stream) -> Result<Item> {
@@ -50,7 +47,9 @@ fn parse_extern(tokens: &mut Stream) -> Result<Vec<FuncDef>> {
 			else { break; }
 		}
 	}
-	let rb = tokens.next().ok_or_else(|| eof("], function definition"))??;
+	let rb = tokens
+		.next()
+		.ok_or_else(|| eof("], function definition"))??;
 	if !matches!(*rb, TK::RBracket) {
 		return Err(ut(rb, "], function definition"));
 	}

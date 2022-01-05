@@ -1,10 +1,9 @@
-
 use thiserror::Error;
 
 use crate::{
 	ast::*,
 	lex::{self, LexError},
-	token::{Token},
+	token::Token,
 };
 
 mod expr;
