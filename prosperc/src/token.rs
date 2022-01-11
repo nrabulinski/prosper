@@ -1,12 +1,8 @@
 use std::fmt;
 
-use crate::span::Spanned;
-
-pub type Token = Spanned<TokenKind>;
-
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[rustfmt::skip]
-pub enum TokenKind {
+pub enum Token {
 	LBracket, RBracket,
 	LParen, RParen,
 
@@ -23,12 +19,14 @@ pub enum TokenKind {
 
 	Lit(Literal),
 
-	Comment(String),
+    // Keywords
+    Fun,
+    Extern,
 }
 
-impl fmt::Display for TokenKind {
+impl fmt::Display for Token {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		use TokenKind::*;
+		use Token::*;
 		match self {
 			LBracket => write!(f, "["),
 			RBracket => write!(f, "]"),
@@ -44,13 +42,14 @@ impl fmt::Display for TokenKind {
 			Slash => write!(f, "/"),
 			Ident(s) => write!(f, "ident: {:?}", s),
 			Lit(lit) => write!(f, "{:?}", lit),
-			Comment(s) => write!(f, "comment: {:?}", s),
+			Fun => write!(f, "fun"),
+			Extern => write!(f, "extern"),
 		}
 	}
 }
 
 // TODO: Literal kinds (64bit unsigned int, 32bit float etc)
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Literal {
 	Int {
 		val: String,
@@ -66,8 +65,8 @@ pub enum Literal {
 	},
 }
 
-impl From<Literal> for TokenKind {
+impl From<Literal> for Token {
 	fn from(lit: Literal) -> Self {
-		TokenKind::Lit(lit)
+		Token::Lit(lit)
 	}
 }

@@ -3,17 +3,20 @@ extern [
 
 	fun print_ints(int, int);
 
-	fun add_one(int) -> int;
+	fun add_one(int,) -> int;
 ]
 
-fun five = 5;
+fun five -> int = 5
 
-fun print_test(a: int) = print_int(a);
+fun print_test(a: int) = print_int(a)
 
-fun many_prints(a: int, b: int) = print_ints(a, b);
+fun many_prints(a: int, b: int) = print_ints(a, b)
 
 fun main = [
-	print_test(2);
-	many_prints(4, 3);
+	[
+		print_test(five());
+		print_test(2)
+	]
+	many_prints(4, add_one(3));
 	print_int(5) // This will print the number 5
 ]

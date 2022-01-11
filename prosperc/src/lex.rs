@@ -1,102 +1,54 @@
-use thiserror::Error;
+use chumsky::prelude::*;
 
 use crate::{
-	span::{Pos, Spanned},
-	token::{Literal::*, Token, TokenKind::*},
+	span::Spanned,
+	token::{Literal, Token},
 };
 
-#[derive(Error, Debug, Clone)]
-pub enum LexError {
-	#[error("Unexpected character {0:?} at position {1}")]
-	UnexpectedChar(char, Pos),
-}
+pub fn lex() -> impl Parser<char, Vec<Spanned<Token>>, Error = Simple<char>> {
+	let int_b10 = text::int(10)
+		.map(|val| Literal::Int { val })
+		.map(Token::Lit);
 
-pub type Result = std::result::Result<Token, LexError>;
+	let lbracket = just('[').to(Token::LBracket);
+	let rbracket = just(']').to(Token::RBracket);
 
-pub fn parse<'a>(path: &'a str, source: &'a str) -> impl Iterator<Item = Result> + 'a {
-	macro_rules! tok {
-		($val:expr, $start:expr, $end:expr) => {
-			Spanned {
-				val: $val.into(),
-				path: path.to_string(),
-				start: $start,
-				end: $end,
-			}
-		};
-	}
-	let mut line = 1;
-	let mut col = 1;
-	let mut iter = source.chars().peekable();
-	std::iter::from_fn(move || loop {
-		let ch = iter.next()?;
-		let start = Pos { line, col };
-		let mut end = start;
-		col += 1;
-		match ch {
-			'[' => return Some(Ok(tok!(LBracket, start, end))),
-			']' => return Some(Ok(tok!(RBracket, start, end))),
+	let lparen = just('(').to(Token::LParen);
+	let rparen = just(')').to(Token::RParen);
 
-			'(' => return Some(Ok(tok!(LParen, start, end))),
-			')' => return Some(Ok(tok!(RParen, start, end))),
+	let semi = just(';').to(Token::Semi);
 
-			';' => return Some(Ok(tok!(Semi, start, end))),
+	let colon = just(':').to(Token::Colon);
 
-			',' => return Some(Ok(tok!(Comma, start, end))),
+	let comma = just(',').to(Token::Comma);
 
-			':' => return Some(Ok(tok!(Colon, start, end))),
+	let thin_arrow = just("->").to(Token::ThinArrow);
 
-			'=' => return Some(Ok(tok!(Eq, start, end))),
+	let fat_arrow = just("=>").to(Token::FatArrow);
 
-			'-' => {
-				if iter.next_if_eq(&'>').is_some() {
-					end.col = col;
-					col += 1;
-					return Some(Ok(tok!(ThinArrow, start, end)));
-				} else {
-					return Some(Ok(tok!(Dash, start, end)));
-				}
-			}
+	let eq = just('=').to(Token::Eq);
 
-			'/' => {
-				if iter.next_if_eq(&'/').is_some() {
-					let mut comment = String::new();
-					while let Some(c) = iter.next_if(|&c| c != '\n') {
-						col += 1;
-						comment.push(c);
-					}
-					end.col = col - 1;
-					return Some(Ok(tok!(Comment(comment), start, end)));
-				} else {
-					return Some(Ok(tok!(Slash, start, end)));
-				}
-			}
+	let dash = just('-').to(Token::Dash);
 
-			c if c.is_ascii_digit() => {
-				let mut num = String::from(c);
-				while let Some(c) = iter.next_if(|&c| c.is_ascii_digit()) {
-					col += 1;
-					num.push(c)
-				}
-				end.col = col - 1;
-				return Some(Ok(tok!(Int { val: num }, start, end)));
-			}
+	let comment = just("//").then(take_until(just('\n'))).padded();
 
-			c if c.is_alphabetic() => {
-				let mut ident = String::from(c);
-				while let Some(c) = iter.next_if(|&c| c.is_alphanumeric() || c == '_') {
-					col += 1;
-					ident.push(c)
-				}
-				end.col = col - 1;
-				return Some(Ok(tok!(Ident(ident), start, end)));
-			}
+	let slash = just('/').to(Token::Slash);
 
-			'\n' => {
-				line += 1;
-				col = 1;
-			}
-			c if c.is_ascii_whitespace() => continue,
-			c => return Some(Err(LexError::UnexpectedChar(c, start))),
-		}
-	})
+	let ident = text::ident().map(|ident: String| match ident.as_str() {
+		"fun" => Token::Fun,
+		"extern" => Token::Extern,
+		_ => Token::Ident(ident),
+	});
+
+	let token = choice((
+		int_b10, lbracket, rbracket, lparen, rparen, semi, colon, comma, thin_arrow, fat_arrow, eq,
+		dash, slash, ident,
+	))
+	.recover_with(skip_then_retry_until([]));
+
+	token
+		.padded_by(comment.repeated())
+		.map_with_span(|tok, span| (tok, span))
+		.padded()
+		.repeated()
 }
